@@ -39,6 +39,8 @@ struct dcp_v14_board {
 	 * releases, so they are only set where tested.
 	 */
 	u32 ctm_set, ctm_get;
+	/* This board has a qualified panel level block; machine admission is separate. */
+	bool panel_nits;
 };
 
 /* Whether the DCP node or the machine (as @ctx gives them) has @compat. */
