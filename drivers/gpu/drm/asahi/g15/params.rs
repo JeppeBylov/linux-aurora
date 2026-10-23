@@ -64,11 +64,32 @@ pub(crate) fn accept_text_prefix() -> u64 {
 }
 
 /// The parameter for the PB growth maximum the firmware is given, in blocks, clamped to
-/// 64..=4095. [`super::pools::Pools::soft_max`] raises it to at least the initial 1024 blocks;
-/// the blocks above it, up to the 4095 posted at most, answer the synchronous requests of
-/// partial renders. It is read-only after boot and does not change the 512 MiB heap.
+/// 64..=4095. [`super::pools::Pools::soft_max`] raises it to at least the initial posting; the
+/// blocks above it, up to the 4095 posted at most, answer the synchronous requests of partial
+/// renders. It is read-only after boot and does not change the heap's backing.
 pub(crate) fn pb_max_blocks() -> u32 {
     (*module_parameters::g15_pb_max_blocks.value()).clamp(64, super::hw::tuning::PB_MAX_BLOCKS)
+}
+
+/// The initial PB posting, in blocks (64..=4095; the ledger clamps it again). Read-only after
+/// boot.
+pub(crate) fn pb_blocks() -> u32 {
+    (*module_parameters::g15_pb_blocks.value()).clamp(64, super::hw::tuning::PB_MAX_BLOCKS)
+}
+
+/// PB reclaim at idle: 0 never, 1 re-initialize, 2 re-initialize and free the backing.
+pub(crate) fn pb_reclaim() -> u32 {
+    (*module_parameters::g15_pb_reclaim.value()).min(2)
+}
+
+/// Idle time before a PB reclaim, ns (at least 100 ms).
+pub(crate) fn pb_idle_ns() -> u64 {
+    (*module_parameters::g15_pb_idle_ms.value()).max(100) as u64 * 1_000_000
+}
+
+/// Posted blocks above which an idle engine reclaims the PB.
+pub(crate) fn pb_reclaim_blocks() -> u32 {
+    *module_parameters::g15_pb_reclaim_blocks.value()
 }
 
 /// Whether FRAGMENT_BARRIERS is advertised and mapped to early tiling.
