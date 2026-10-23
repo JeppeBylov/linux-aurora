@@ -37,7 +37,8 @@ jobs:
   plan:
     name: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Sparse checkout and fetching baseline trees can exceed ten minutes.
+    timeout-minutes: 30
     permissions:
       actions: read # look up and download earlier runs' artifacts
       contents: read # check out the repository

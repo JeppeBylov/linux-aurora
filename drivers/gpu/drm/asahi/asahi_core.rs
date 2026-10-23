@@ -137,7 +137,23 @@ module! {
         },
         g15_pb_max_blocks: u32 {
             default: 3072,
-            description: "G15: parameter-buffer growth maximum given to the firmware, blocks of 128 KiB (1024..4095 in effect; the blocks above it, up to 4095, answer partial renders; the 512 MiB heap is allocated either way)",
+            description: "G15: PB growth maximum given to the firmware, 128 KiB blocks (64..4095)",
+        },
+        g15_pb_blocks: u32 {
+            default: 64,
+            description: "G15: PB blocks posted at (re)initialization, 128 KiB each (64..4095)",
+        },
+        g15_pb_reclaim: u32 {
+            default: 2,
+            description: "G15: PB reclaim when idle: 0 never, 1 re-initialize, 2 also free backing",
+        },
+        g15_pb_idle_ms: u32 {
+            default: 1000,
+            description: "G15: idle time before a PB reclaim, ms (at least 100)",
+        },
+        g15_pb_reclaim_blocks: u32 {
+            default: 1024,
+            description: "G15: PB blocks posted above which an idle engine reclaims the PB",
         },
         g15_early_tiling: u32 {
             default: 0,

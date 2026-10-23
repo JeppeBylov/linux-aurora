@@ -23,7 +23,7 @@ use kernel::{
         hrtimer::{
             HrTimerCallback, HrTimerCallbackContext, HrTimerPointer, HrTimerRestart, RelativeMode,
         },
-        Delta, Jiffies, Monotonic,
+        msecs_to_jiffies, Delta, Jiffies, Monotonic,
     },
     workqueue::RawWorkItem,
 };
@@ -85,7 +85,15 @@ impl Shared {
                 let evented = self.evented.swap(false, Ordering::AcqRel);
                 match firmware.poll(evented, &mut done) {
                     Ok(true) => self.rearm(firmware.engine.chan_wait),
-                    Ok(false) => {}
+                    // Idle: nothing polls until new work arrives, so a PB reclaim that comes
+                    // due with more idle time gets one more pass then. A job's arrival brings
+                    // the poll work forward (`rearm`), which replaces this expiry.
+                    Ok(false) => {
+                        if let Some(ns) = firmware.reclaim_delay_ns() {
+                            let ms = ns.div_ceil(1_000_000).min(u32::MAX as u64) as u32;
+                            self.mod_poll(msecs_to_jiffies(ms) + 1);
+                        }
+                    }
                     Err(error) => self.fail_stop(error),
                 }
             }
@@ -207,6 +215,9 @@ impl Firmware {
         // prefixes published the retirement loop below drains first.
         if self.engine.flights.is_empty() {
             self.drain_rings()?;
+            // Idle bookkeeping of the PB: when the idle began, and the reclaim once it is due.
+            self.note_idle();
+            self.reclaim_check();
             if self.recovery_idle() {
                 return Ok(false);
             }
@@ -228,6 +239,9 @@ impl Firmware {
             self.engine.prof.polls += 1;
             self.engine.prof.poll_ns += now_ns().wrapping_sub(start);
         }
+        // The pass that retired the last flight is not re-armed: note the idle here, not only
+        // at the start of a pass that finds the flights empty.
+        self.note_idle();
         published?;
         Ok(!self.engine.flights.is_empty() || self.recovery.needs_repoll() || self.engine.frozen)
     }

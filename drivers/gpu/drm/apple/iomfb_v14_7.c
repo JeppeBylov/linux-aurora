@@ -161,6 +161,8 @@ static const struct dcp_v14_board dcp_v14_board_j516c = {
 	.panel_height = 2234,
 	.promotion = true,
 	.log_bringup = true,
+	.base_edid = true,
+	.swap_timestamps = true,
 };
 
 /*
@@ -1696,6 +1698,16 @@ const char *iomfb_v14_7_board_name(const struct dcp_v14_board *board)
 	return board->name;
 }
 
+bool dcp_v14_board_stamps_swaps(const struct dcp_v14_board *board, bool external)
+{
+	return board && !external && board->swap_timestamps;
+}
+
+bool iomfb_v14_7_base_edid(const struct apple_dcp *dcp)
+{
+	return dcp->v14 && dcp->v14->board && dcp->v14->board->base_edid;
+}
+
 int iomfb_v14_7_probe(struct apple_dcp *dcp)
 {
 	struct device *dev = dcp->dev;
@@ -2817,6 +2829,8 @@ static int dcp_v14_swap_locked(struct apple_dcp_v14 *v14, const u8 *surface, u64
 	if (!ret) {
 		dcp_v14_encode_swap(swap, id, DCP_V14_BLACK, surface, iova, width, height,
 				    dst_y, DCP_V14_LAYER);
+		if (dcp_v14_board_stamps_swaps(v14->board, v14->external))
+			dcp_v14_swap_timestamps(swap);
 		nits = dcp_v14_swap_nits(v14, swap, &present);
 		ret = dcp_v14_call_guarded(v14, A(407), swap, DCP_V14_SWAP_SIZE, result, sizeof(result),
 				   id, dcp_v14_swap_admit, &admission);
