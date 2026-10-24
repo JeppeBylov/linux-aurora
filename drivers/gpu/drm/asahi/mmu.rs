@@ -1477,7 +1477,7 @@ unsafe impl Send for UatShared {}
 #[pin_data]
 struct UatInner {
     firmware: UatFirmware,
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     clean_poc: bool,
     #[pin]
     shared: Mutex<UatShared>,
@@ -1665,7 +1665,7 @@ impl Vm {
             UatPageTable::new(geometry.ias, geometry.oas)?
         };
 
-        #[cfg(CONFIG_DRM_ASAHI_G15)]
+        #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
         let page_table = {
             let mut page_table = page_table;
             if uat_inner.clean_poc {
@@ -1753,7 +1753,7 @@ impl Vm {
     /// Attach a status and job lifetime tracking before sharing a newly created user VM with
     /// queues, without the G17 canonical context views, shared-object footprints and idle
     /// residency reclaim of [`Self::with_status`]. Used by G15, whose user objects stay pinned.
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     pub(crate) fn with_tracked_status(mut self) -> Result<Self> {
         self.status = Some(Arc::pin_init(crate::g17::status::VmStatus::new(), GFP_KERNEL)?);
         self.lifetime = Some(lifetime::VmLifetime::new()?);
@@ -1761,7 +1761,7 @@ impl Vm {
     }
 
     /// The identifier this VM was created with (G15 keeps per-VM state keyed by it).
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
@@ -1773,7 +1773,7 @@ impl Vm {
     /// and invalidated to the point of coherency first (never only invalidated: CPU-written lines
     /// may be dirty), so the copy sees what the GPU or a write-combined CPU view stored. The
     /// mappings cannot change during the copy (GPUVM exec lock).
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     pub(crate) fn read_user(&self, va: u64, buf: &mut [u8]) -> Result {
         let mut inner = lock_vm(&self.gpuvm, None, false)?;
         let mut done = 0usize;
@@ -2420,7 +2420,7 @@ impl Drop for VmInner {
 
 /// Physical regions of a UAT whose handoff the generation has already established itself
 /// ([`Uat::new_adopted`]). None of them needs to be in the kernel linear map.
-#[cfg(CONFIG_DRM_ASAHI_G15)]
+#[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
 pub(crate) struct AdoptedRegions {
     /// The handoff region (PPL magic, lock and flush requests).
     pub(crate) handoff: Range<PhysicalAddr>,
@@ -2431,7 +2431,7 @@ pub(crate) struct AdoptedRegions {
 }
 
 impl Uat {
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     /// Map a region given by its physical range, write-combined.
     fn map_physical(range: &Range<PhysicalAddr>, min_size: usize) -> Result<UatRegion> {
         let size: usize = (range.end.checked_sub(range.start).ok_or(EINVAL)?).try_into()?;
@@ -2466,7 +2466,7 @@ impl Uat {
         })
     }
 
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     /// Creates a `Uat` for a handoff that the caller establishes itself (G15).
     ///
     /// This only maps the handoff and the TTBAT (write-combined); neither is written here. The
@@ -2548,13 +2548,13 @@ impl Uat {
         })
     }
 
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     /// Root of the kernel lower `Vm`, for TTBAT context 0 of an adopted handoff.
     pub(crate) fn kernel_lower_root(&self) -> PhysicalAddr {
         self.kernel_lower_vm.ttb()
     }
 
-    #[cfg(CONFIG_DRM_ASAHI_G15)]
+    #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
     /// Root whose driver-window entry names the second-level table of [`Self::kernel_vm`]'s
     /// driver window. With [`Self::new_adopted`] this is the shadow root that no context names.
     pub(crate) fn kernel_window_root(&self) -> PhysicalAddr {
@@ -2900,7 +2900,7 @@ impl Uat {
         Arc::pin_init(
             try_pin_init!(UatInner {
                 firmware,
-                #[cfg(CONFIG_DRM_ASAHI_G15)]
+                #[cfg(CONFIG_DRM_ASAHI_UAT_ADOPTION)]
                 clean_poc: false,
                 handoff_flush <- pin_init::pin_init_array_from_fn(|i| {
                     new_mutex!(HandoffFlush(&handoff.flush[i]), "handoff_flush")
