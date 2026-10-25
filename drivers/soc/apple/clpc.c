@@ -345,6 +345,7 @@ static void apple_clpc_stop(void *data)
 static int apple_clpc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct device_node *gpu = NULL;
 	struct apple_clpc *clpc;
 	unsigned int rail, i;
 	int ret;
@@ -356,19 +357,18 @@ static int apple_clpc_probe(struct platform_device *pdev)
 	clpc->dev = dev;
 	clpc->pmc = dev->parent;
 	clpc->hw = of_device_get_match_data(dev);
-	if (clpc->hw->gpu_demand) {
-		struct device_node *gpu = of_parse_phandle(dev->of_node,
-							 "apple,gpu-power-state", 0);
-
-		if (!gpu)
-			return dev_err_probe(dev, -EINVAL, "missing graphics power state\n");
+	/* The property is optional: without it, CPU demand alone sets the floors. */
+	if (clpc->hw->gpu_demand)
+		gpu = of_parse_phandle(dev->of_node, "apple,gpu-power-state", 0);
+	if (gpu) {
 		ret = of_property_read_u32(gpu, "reg", &clpc->gpu_offset);
 		clpc->gpu_pmgr = syscon_node_to_regmap(gpu->parent);
 		of_node_put(gpu);
 		if (ret)
-			return ret;
+			return dev_err_probe(dev, ret, "graphics power state has no reg\n");
 		if (IS_ERR(clpc->gpu_pmgr))
-			return PTR_ERR(clpc->gpu_pmgr);
+			return dev_err_probe(dev, PTR_ERR(clpc->gpu_pmgr),
+					     "no regmap for the graphics power state\n");
 	}
 	if (!apple_pmc_rail_count(clpc->pmc))
 		return dev_err_probe(dev, -ENODEV, "parent is not a PMC\n");
