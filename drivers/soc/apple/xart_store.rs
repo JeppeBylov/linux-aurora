@@ -442,6 +442,11 @@ impl Store {
             .map(|guard| (guard.effective_level(), guard.list_loaded()))
     }
 
+    /// The guard's refusals since probe; 0 without a guard.
+    pub(crate) fn guard_refusals(&self) -> usize {
+        self.guard.as_ref().map_or(0, |guard| guard.refusals())
+    }
+
     /// Opens the guard's first-setup window (see [`crate::xart_guard`]).
     /// `false` without a guard or once this install has listed a record.
     pub(crate) fn open_first_setup(&mut self) -> bool {

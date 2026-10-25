@@ -675,6 +675,8 @@ impl SepData {
             && self
                 .with_store(|store| store.open_first_setup())
                 .unwrap_or(false);
+        let refusals = || self.with_store(|store| store.guard_refusals()).unwrap_or(0);
+        let refused_before = refusals();
         intent.sending();
         let exchanged = self.sks_exchange(request.name, request.msg, &request.img);
         if first_setup {
@@ -685,6 +687,22 @@ impl SepData {
                 self.dev,
                 "sks: CREATE_KEYBAG exchange did not complete (buffers unregistered, wedged, or OOL write failed)\n"
             );
+            // The enclave could not save the state the create needed, so it
+            // kept no keybag: let the next boot try again rather than refuse
+            // every attempt as a keybag that may exist unnamed.
+            if refusals() > refused_before {
+                dev_warn!(
+                    self.dev,
+                    "sks: the xART guard refused the enclave's write during CREATE_KEYBAG; the next boot may try again\n"
+                );
+                if let Err(e) = keybag::mark_refused(slot) {
+                    dev_err!(
+                        self.dev,
+                        "sks: cannot mark the refused keybag create retryable: {:?}\n",
+                        e
+                    );
+                }
+            }
             return false;
         };
         let Some(body) = self.sks_report_response(crate::sks::SKS_CREATE_NAME, &out) else {
