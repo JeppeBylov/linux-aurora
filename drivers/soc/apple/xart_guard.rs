@@ -347,7 +347,13 @@ impl<F: ListFile> Guard<F> {
     /// install: the list loaded and holding no entry, torn ones included.
     /// Returns whether it opened.
     pub(crate) fn open_first_setup(&mut self) -> bool {
-        if self.file.is_none() || self.end != 0 {
+        // The file's length, not `end`: a torn first entry rounds `end` down
+        // to 0 but is still an earlier setup.
+        let empty = self
+            .file
+            .as_ref()
+            .is_some_and(|file| file.size().is_ok_and(|size| size == 0));
+        if !empty {
             return false;
         }
         self.first_setup = FirstSetup::Open;
