@@ -130,19 +130,29 @@ Light runs execute a pull request's code on GitHub-hosted runners with a
 read-only token, as every public repository's CI does. Full runs start from
 a trusted author or a maintainer action:
 
-- a push to a pull request, from a fork too, once it is out of draft, by a
-  trusted author: a repository collaborator, or anyone vouched for in
-  ``.github/VOUCHED.td``;
+- a push to a pull request, from a fork too, once it is out of draft, by
+  anyone vouched for in ``.github/VOUCHED.td`` (the kernel team), when the
+  pusher is vouched for too. Access to the repository or the omacom
+  organization alone does not count;
 - queueing a pull request, pushing to the branch, or a manual run;
 - applying ``ci:build`` (which needs triage access). On a branch of this
   repository the label applies to every later push; on a fork it applies to
   the head it was applied to, and has to be applied again after a new push.
 
 ``VOUCHED.td`` lists the team: one ``github:<login>`` per line, sorted.
-``-github:<login> <reason>`` denounces an author, which neither collaborator
-access nor the label overrides. The plan job reads the list from the target
+``-github:<login> <reason>`` denounces an author, which the label does not
+override. The plan job reads the list from the target
 branch through the API, so a pull request that edits it changes nothing until
 it merges. To add someone, open a pull request adding their line.
+
+GitHub holds every run of a pull request from an outside collaborator until
+a maintainer approves it. ``kernel-ci-approve.yml`` (``approve-runs.py``)
+releases the held ``kernel-ci.yml`` run of the current head when the author
+is vouched for, so they need no clicks either. It runs on
+``pull_request_target`` and fetches only the target branch's files; no pull
+request code runs with its write token. Anyone else's runs stay held, and
+once approved they run the checks only unless a maintainer applies
+``ci:build``.
 
 On a ``pull_request`` event GitHub runs the workflow files from the pull
 request itself, so these rules decide cost, not security: a fork could edit
@@ -177,7 +187,8 @@ These need an administrator:
 - branch protection for ``integration/aurora`` requiring ``ci / result``;
 - the merge queue (merge method: merge commit), so the tree that merges is
   the tree that was tested;
-- workflow approval for outside collaborators (Settings, Actions, General);
+- workflow approval for all outside collaborators (Settings, Actions,
+  General), which ``kernel-ci-approve.yml`` relies on;
 - optionally ``KERNEL_CI_RUNNER`` for faster builds.
 
 Running the tools locally

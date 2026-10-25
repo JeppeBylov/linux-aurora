@@ -63,7 +63,7 @@ jobs:
           sparse-checkout: tools/aurora-ci
       # From the target branch, never the pull request: a pull request must
       # not vouch for its own author. Without the list (the branch does not
-      # have one yet, or the API fails) only collaborators are trusted.
+      # have one yet, or the API fails) no author is trusted.
       - name: Read the vouch list from the target branch
         if: github.event_name == 'pull_request'
         env:
@@ -74,7 +74,7 @@ jobs:
               "repos/$GITHUB_REPOSITORY/contents/.github/VOUCHED.td?ref=$BASE_SHA" \
               > "$RUNNER_TEMP/VOUCHED.td"; then
             : > "$RUNNER_TEMP/VOUCHED.td"
-            echo "::warning title=Vouch list::no .github/VOUCHED.td at $BASE_SHA; trusting collaborators only"
+            echo "::warning title=Vouch list::no .github/VOUCHED.td at $BASE_SHA; no author is trusted"
           fi
       - name: Plan the run
         id: plan

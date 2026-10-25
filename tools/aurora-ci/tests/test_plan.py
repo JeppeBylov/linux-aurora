@@ -11,9 +11,10 @@ HEAD = "b" * 40
 
 
 def pull_request(action, labels=(), fork=False, label=None, author="someone",
-                 association="CONTRIBUTOR", draft=False):
+                 association="CONTRIBUTOR", draft=False, sender=None):
     event = {
         "action": action,
+        "sender": {"login": sender or author},
         "pull_request": {
             "number": 42,
             "user": {"login": author},
@@ -95,21 +96,31 @@ class TrustedAuthorTest(TempDirTestCase):
                 result = plan("pull_request", pull_request(action, fork=True, author="acelogic"),
                               vouched=self.vouched)
                 self.assertEqual(result["tier"], "full")
-                self.assertIn("acelogic is trusted (vouched)", result["reason"])
+                self.assertIn("acelogic is vouched for", result["reason"])
 
-    def test_collaborator_builds_without_being_listed(self):
-        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
-            with self.subTest(association=association):
-                event = pull_request("synchronize", fork=True, association=association)
-                result = plan("pull_request", event, vouched=self.vouched)
-                self.assertEqual(result["tier"], "full")
-                self.assertIn("(collaborator)", result["reason"])
-
-    def test_unknown_author_runs_checks_only(self):
-        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE"):
+    def test_unlisted_author_runs_checks_only_whatever_their_access(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR",
+                            "FIRST_TIME_CONTRIBUTOR", "NONE"):
             with self.subTest(association=association):
                 event = pull_request("synchronize", fork=True, association=association)
                 self.assertEqual(plan("pull_request", event, vouched=self.vouched)["tier"], "light")
+
+    def test_push_by_someone_outside_the_team_runs_checks_only(self):
+        for sender in ("stranger", "banned"):
+            with self.subTest(sender=sender):
+                event = pull_request("synchronize", fork=True, author="Teammate", sender=sender)
+                result = plan("pull_request", event, vouched=self.vouched)
+                self.assertEqual(result["tier"], "light")
+                self.assertIn(sender, result["reason"])
+
+    def test_missing_sender_is_not_trusted(self):
+        event = pull_request("synchronize", author="Teammate")
+        del event["sender"]
+        self.assertEqual(plan("pull_request", event, vouched=self.vouched)["tier"], "light")
+
+    def test_maintainer_label_still_builds_an_unknown_author(self):
+        event = pull_request("labeled", label="ci:build", author="stranger", sender="Teammate")
+        self.assertEqual(plan("pull_request", event, vouched=self.vouched)["tier"], "full")
 
     def test_draft_waits_until_ready_for_review(self):
         draft = plan("pull_request", pull_request("synchronize", author="Teammate", draft=True),
@@ -129,9 +140,10 @@ class TrustedAuthorTest(TempDirTestCase):
                 self.assertEqual(result["tier"], "light")
                 self.assertIn("denounced", result["reason"])
 
-    def test_without_a_list_only_collaborators_are_trusted(self):
-        self.assertEqual(plan("pull_request", pull_request("opened", author="Acelogic"))["tier"], "light")
-        self.assertEqual(plan("pull_request", pull_request("opened", association="MEMBER"))["tier"], "full")
+    def test_without_a_list_no_author_is_trusted(self):
+        for event in (pull_request("opened", author="Acelogic"), pull_request("opened", association="MEMBER")):
+            with self.subTest(event=event):
+                self.assertEqual(plan("pull_request", event)["tier"], "light")
 
     def test_the_repository_list_is_well_formed(self):
         path = TREE / ".github" / "VOUCHED.td"
