@@ -94,6 +94,7 @@ struct apple_clpc {
 	u32 saved_floor;
 	unsigned long samples;
 	unsigned long update_errors;
+	unsigned long gpu_read_errors;
 	struct dentry *debugfs;
 	struct regmap *gpu_pmgr;
 	u32 gpu_offset;
@@ -245,8 +246,15 @@ static void apple_clpc_sample(struct apple_clpc *clpc)
 		/* Keep the qualified floor while graphics is powered. A failed
 		 * read must not silently starve a running graphics consumer.
 		 */
-		if (regmap_read(clpc->gpu_pmgr, clpc->gpu_offset, &status) ||
-		    (status & GENMASK(7, 4)) == GENMASK(7, 4))
+		int err = regmap_read(clpc->gpu_pmgr, clpc->gpu_offset, &status);
+
+		if (err) {
+			clpc->gpu_read_errors++;
+			dev_warn_once(clpc->dev,
+				      "graphics power state read failed (%d); holding the GPU floor\n",
+				      err);
+		}
+		if (err || (status & GENMASK(7, 4)) == GENMASK(7, 4))
 			for (rail = 0; rail < APPLE_CLPC_RAILS; rail++)
 				demand[rail] = clpc->hw->map[rail][APPLE_CLPC_LEVELS - 1];
 	}
@@ -290,8 +298,8 @@ static int apple_clpc_status_show(struct seq_file *s, void *unused)
 						   clpc->hw->rail[rail]),
 			   clpc->hw->map[rail][0], clpc->hw->map[rail][1],
 			   clpc->hw->map[rail][2], clpc->hw->map[rail][3]);
-	seq_printf(s, "samples: %lu update errors: %lu\n", clpc->samples,
-		   clpc->update_errors);
+	seq_printf(s, "samples: %lu update errors: %lu gpu read errors: %lu\n",
+		   clpc->samples, clpc->update_errors, clpc->gpu_read_errors);
 	for (i = 0; i < clpc->nr_clusters; i++)
 		seq_printf(s, "cluster cpu%u: busy %u%% level %u%% -> dcs %u soc %u\n",
 			   clpc->clusters[i].policy_cpu, clpc->clusters[i].busy,
