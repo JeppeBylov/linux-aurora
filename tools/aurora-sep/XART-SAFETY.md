@@ -20,7 +20,9 @@ refuses to rewrite or delete any session record that was already in the
 gigalocker and is not on that list. `xart_guard=2` also refuses writes to the
 two shared root records. A refused write fails the enclave's request the way
 a read-only gigalocker does: Touch ID may then be unavailable, but no other
-OS's record changes.
+OS's record changes. The one exception is a fresh install's first keybag
+creation on a warm-attach Mac at level 1, which may rewrite one existing
+SEP-xART locker (see "Fresh installs" below).
 
 The default, `xart_guard=-1`, takes the platform's level:
 
@@ -158,6 +160,10 @@ it:
   cold-boot Mac needs `xart_guard=0` as above.
 - A torn last entry, from a crash while appending, is ignored at the next
   probe and overwritten by the next new record.
+- The first entry may be a marker instead of a record: it says this
+  install's first-setup window (see "Fresh installs") has been used. It
+  lists no record. Resetting Touch ID keeps the list, so the new keybag gets
+  no window; a reinstall or deleting the file gives the next create one.
 
 The file holds only record kinds and session ids, no key material, and it
 can be backed up and copied like any other file.
@@ -212,20 +218,38 @@ the Omarchy Mac installer:
   unaffected.
 - Changing the startup disk between macOS and Linux in System Settings did
   not leave the locker pending.
-- With the window below, a fresh install (no macOS boot after it) created
+- With the window below, in its first version (before the marker), a
+  fresh install (no macOS boot after it) created
   its keybag on Linux's first boot: the enclave committed the locker to
-  1137 bytes, as macOS's does, and the list stayed empty. Enrolment, match,
+  1137 bytes, as macOS's does, and no record was listed. Enrolment, match,
   `keyctl` seal and load, restore and match after a restart, macOS Touch ID
   unlock and keychain, then restore, `keyctl` load and match back in Linux
   all passed, with no refusal.
 
 So during the first `CREATE_KEYBAG` of an install whose list is loaded and
 empty, on a warm-attach Mac at level 1, the guard lets the enclave rewrite
-one existing kind-4 locker (`FirstSetup` in `xart_guard.rs`). It does not
-list the locker as Linux's, so no later rewrite passes. Deletes, kind-3
-lockers and a second rewrite are refused as before, and cold-boot Macs get
-no window: their create rewrites a pre-Linux record for a different reason
-(above).
+the first existing kind-4 locker it writes (`FirstSetup` in
+`xart_guard.rs`). Nothing identifies that locker as the pending one: no
+record says which OS or bless it belongs to, and a size test would not prove
+it. Deletes, kind-3 lockers and a second rewrite are refused as before.
+Level 2 gets no window, and neither do cold-boot Macs: their create
+rewrites a pre-Linux record for a different reason (above).
+
+The window is used once while the install keeps its list. Before the
+create is sent, the driver writes a marker as the list's first entry and
+flushes it, so the list is no longer empty whatever becomes of the create,
+and no later create (another boot, or after a Touch ID reset) gets the
+window. Restoring or deleting the list along with the keybag can open it
+again. If the marker cannot be written, the create is not sent that boot,
+and the driver marks the attempt retryable (if that fails too, later creates
+fail with `EEXIST`). The next boot gets the window only if none of the
+marker survived.
+
+A create that gets no reply, as one with a refused write does, keeps its
+intent record, so later creates fail with `EEXIST` until Touch ID is reset
+(`install-aurora-sep.sh --reset-touchid`): the enclave may have kept part of
+what it saved before the refusal. A create the enclave answers with an error
+stays retryable, as before.
 
 ## Earlier deployment policy
 

@@ -443,11 +443,11 @@ impl Store {
     }
 
     /// Opens the guard's first-setup window (see [`crate::xart_guard`]).
-    /// `false` without a guard or once this install has listed a record.
-    pub(crate) fn open_first_setup(&mut self) -> bool {
+    /// `Ok(false)` without a guard or once this install has listed anything.
+    pub(crate) fn open_first_setup(&mut self) -> Result<bool> {
         self.guard
             .as_mut()
-            .is_some_and(|guard| guard.open_first_setup())
+            .map_or(Ok(false), |guard| guard.open_first_setup())
     }
 
     pub(crate) fn close_first_setup(&mut self) {
