@@ -338,11 +338,6 @@ impl<F: ListFile> Guard<F> {
         self.file.is_some()
     }
 
-    /// The writes and deletes refused since probe.
-    pub(crate) fn refusals(&self) -> usize {
-        self.refused
-    }
-
     /// Opens the first-setup window for one keybag creation, only on a fresh
     /// install: the list loaded and holding no entry, torn ones included.
     /// Returns whether it opened.
@@ -661,7 +656,7 @@ mod tests {
         assert_eq!(bytes.borrow().len(), 0);
         guard.close_first_setup();
         assert_eq!(guard.check(&pending, true), Err(EPERM));
-        assert_eq!(guard.refusals(), 5);
+        assert_eq!(guard.refused, 5);
         Ok(())
     }
 

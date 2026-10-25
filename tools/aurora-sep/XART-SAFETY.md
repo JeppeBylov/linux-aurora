@@ -98,9 +98,6 @@ the kernel log names the refused kind. What to do depends on the case:
   until it has been checked there.
 - A warm-attach Mac set up under the guard whose verify is refused: report
   the log line. `xart_guard=0` restores use at the cost of the protection.
-- A keybag creation with a refused write: the enclave may stop answering
-  until a restart, and the driver marks the create retryable, so the next
-  boot tries again.
 - A list that could not be read: every record that existed at boot is
   protected and nothing can be adopted, so new records cannot be written
   either.
@@ -229,10 +226,6 @@ list the locker as Linux's, so no later rewrite passes. Deletes, kind-3
 lockers and a second rewrite are refused as before, and cold-boot Macs get
 no window: their create rewrites a pre-Linux record for a different reason
 (above).
-
-If a create still has a write refused, the enclave cannot have kept a
-keybag, so the driver marks the attempt retryable rather than leaving an
-intent record that refuses every later create with `EEXIST`.
 
 ## Earlier deployment policy
 
