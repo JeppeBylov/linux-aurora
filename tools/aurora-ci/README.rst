@@ -12,14 +12,17 @@ What runs when
 ==============
 
 Builds take time and, on some runners, money. Pull requests get the checks
-that run on free GitHub-hosted runners on every push; the kernel is built
-once, in the merge queue, from exactly the tree that will land.
+that run on free GitHub-hosted runners on every push; the team's pull
+requests are also built on every push, and everyone's kernel is built again
+in the merge queue, from exactly the tree that will land.
 
 ====================  =================================================
 Event                 Jobs
 ====================  =================================================
 pull request push     plan, commits, compile, device trees, host tests,
                       CI self-test
+trusted author push   all of the above, then package, KUnit and boot
+                      (not on drafts)
 ``ci:build`` label    all of the above, then package, KUnit and boot
 merge queue           everything
 push to the branch    package (reused from the queue), attestation
@@ -124,12 +127,22 @@ Who can start a build
 =====================
 
 Light runs execute a pull request's code on GitHub-hosted runners with a
-read-only token, as every public repository's CI does. Full runs start only
-from a maintainer action: queueing a pull request, pushing to the branch, a
-manual run, or applying ``ci:build`` (which needs triage access). On a branch
-of this repository the label applies to every later push; on a fork it
-applies to the head it was applied to, and has to be applied again after a
-new push.
+read-only token, as every public repository's CI does. Full runs start from
+a trusted author or a maintainer action:
+
+- a push to a pull request, from a fork too, once it is out of draft, by a
+  trusted author: a repository collaborator, or anyone vouched for in
+  ``.github/VOUCHED.td``;
+- queueing a pull request, pushing to the branch, or a manual run;
+- applying ``ci:build`` (which needs triage access). On a branch of this
+  repository the label applies to every later push; on a fork it applies to
+  the head it was applied to, and has to be applied again after a new push.
+
+``VOUCHED.td`` lists the team: one ``github:<login>`` per line, sorted.
+``-github:<login> <reason>`` denounces an author, which neither collaborator
+access nor the label overrides. The plan job reads the list from the target
+branch through the API, so a pull request that edits it changes nothing until
+it merges. To add someone, open a pull request adding their line.
 
 On a ``pull_request`` event GitHub runs the workflow files from the pull
 request itself, so these rules decide cost, not security: a fork could edit
@@ -160,6 +173,7 @@ Repository setup
 These need an administrator:
 
 - a ``ci:build`` label;
+- ``.github/VOUCHED.td`` kept to the team (a pull request, like any other);
 - branch protection for ``integration/aurora`` requiring ``ci / result``;
 - the merge queue (merge method: merge commit), so the tree that merges is
   the tree that was tested;

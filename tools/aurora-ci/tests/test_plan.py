@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 import json
 
-from support import TempDirTestCase, load, read_outputs
+from support import TREE, TempDirTestCase, load, read_outputs
 
 plan_module = load("plan")
 plan = plan_module.plan
@@ -10,11 +10,15 @@ BASE = "a" * 40
 HEAD = "b" * 40
 
 
-def pull_request(action, labels=(), fork=False, label=None):
+def pull_request(action, labels=(), fork=False, label=None, author="someone",
+                 association="CONTRIBUTOR", draft=False):
     event = {
         "action": action,
         "pull_request": {
             "number": 42,
+            "user": {"login": author},
+            "author_association": association,
+            "draft": draft,
             "labels": [{"name": name} for name in labels],
             "base": {"sha": BASE, "repo": {"full_name": "omacom/linux-aurora"}},
             "head": {"sha": HEAD, "repo": {"full_name": "someone/linux-aurora" if fork
@@ -65,6 +69,81 @@ class PullRequestTest(TempDirTestCase):
         self.assertEqual(plan("pull_request", event, label="build-approved")["tier"], "full")
 
 
+VOUCHED = """\
+# comment
+github:Acelogic
+github:Teammate
+-github:Banned spam
+github:banned
+-github:Revoked
+gitlab:other
+"""
+
+
+class TrustedAuthorTest(TempDirTestCase):
+    def setUp(self):
+        super().setUp()
+        self.vouched = plan_module.read_vouched(VOUCHED)
+
+    def test_read_vouched(self):
+        self.assertEqual(self.vouched, {"acelogic": "vouched", "teammate": "vouched",
+                                        "banned": "denounced", "revoked": "denounced"})
+
+    def test_vouched_author_builds_every_push_from_a_fork(self):
+        for action in ("opened", "synchronize", "reopened", "ready_for_review"):
+            with self.subTest(action=action):
+                result = plan("pull_request", pull_request(action, fork=True, author="acelogic"),
+                              vouched=self.vouched)
+                self.assertEqual(result["tier"], "full")
+                self.assertIn("acelogic is trusted (vouched)", result["reason"])
+
+    def test_collaborator_builds_without_being_listed(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            with self.subTest(association=association):
+                event = pull_request("synchronize", fork=True, association=association)
+                result = plan("pull_request", event, vouched=self.vouched)
+                self.assertEqual(result["tier"], "full")
+                self.assertIn("(collaborator)", result["reason"])
+
+    def test_unknown_author_runs_checks_only(self):
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE"):
+            with self.subTest(association=association):
+                event = pull_request("synchronize", fork=True, association=association)
+                self.assertEqual(plan("pull_request", event, vouched=self.vouched)["tier"], "light")
+
+    def test_draft_waits_until_ready_for_review(self):
+        draft = plan("pull_request", pull_request("synchronize", author="Teammate", draft=True),
+                     vouched=self.vouched)
+        self.assertEqual(draft["tier"], "light")
+        self.assertIn("ready for review", draft["reason"])
+        labeled = plan("pull_request", pull_request("labeled", author="Teammate", draft=True,
+                                                    label="ci:build"), vouched=self.vouched)
+        self.assertEqual(labeled["tier"], "full")
+
+    def test_denouncement_overrides_access_and_label(self):
+        for event in (pull_request("synchronize", author="banned", association="COLLABORATOR"),
+                      pull_request("labeled", labels=["ci:build"], label="ci:build", author="Revoked"),
+                      pull_request("synchronize", labels=["ci:build"], author="BANNED")):
+            with self.subTest(event=event):
+                result = plan("pull_request", event, vouched=self.vouched)
+                self.assertEqual(result["tier"], "light")
+                self.assertIn("denounced", result["reason"])
+
+    def test_without_a_list_only_collaborators_are_trusted(self):
+        self.assertEqual(plan("pull_request", pull_request("opened", author="Acelogic"))["tier"], "light")
+        self.assertEqual(plan("pull_request", pull_request("opened", association="MEMBER"))["tier"], "full")
+
+    def test_the_repository_list_is_well_formed(self):
+        path = TREE / ".github" / "VOUCHED.td"
+        logins = [line.split(":", 1)[1] for line in path.read_text().splitlines()
+                  if line.startswith("github:")]
+        self.assertTrue(logins)
+        self.assertEqual(logins, sorted(logins, key=str.lower))
+        self.assertEqual(len(logins), len({login.lower() for login in logins}))
+        self.assertTrue(all(status == "vouched" for status in
+                            plan_module.read_vouched(path.read_text()).values()))
+
+
 class OtherEventsTest(TempDirTestCase):
     def test_merge_group_builds_the_queue_commit(self):
         result = plan("merge_group", {"merge_group": {"base_sha": BASE, "head_sha": HEAD}})
@@ -104,6 +183,16 @@ class MainTest(TempDirTestCase):
         self.assertEqual(values["tier"], "full")
         self.assertEqual(values["head_sha"], HEAD)
         self.assertIn("full run", summary.read_text())
+
+    def test_reads_the_vouch_list(self):
+        output, _ = self.github_env()
+        event = self.tmp / "event.json"
+        event.write_text(json.dumps(pull_request("synchronize", fork=True, author="Teammate")))
+        vouched = self.tmp / "VOUCHED.td"
+        vouched.write_text(VOUCHED)
+        self.assertEqual(plan_module.main(["--event-name", "pull_request", "--event-path", str(event),
+                                           "--vouched", str(vouched)]), 0)
+        self.assertEqual(read_outputs(output)["tier"], "full")
 
     def test_malformed_event_fails_cleanly(self):
         self.github_env()

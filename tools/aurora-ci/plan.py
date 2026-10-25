@@ -17,10 +17,17 @@ when someone with write access asks for one:
   pull_request, labeled    full when the label is the build label. Applying
                            a label needs triage access, so this is a
                            maintainer asking for this exact head commit.
-  pull_request, other      full when the build label is already on a branch
-                           of this repository (only writers can push there);
-                           light for forks, where a new push needs the label
+  pull_request, other      full when the author is trusted and the pull
+                           request is not a draft, from a fork too; full when
+                           the build label is already on a branch of this
+                           repository (only writers can push there); light
+                           for forks, where a new push needs the label
                            re-applied, and light otherwise.
+
+Trusted authors are repository collaborators and those vouched for in
+.github/VOUCHED.td, which the workflow reads from the target branch so that a
+pull request cannot vouch for itself. An author denounced there gets light
+runs only, whatever their access or labels.
 """
 
 import argparse
@@ -32,9 +39,43 @@ from pathlib import Path
 DEFAULT_LABEL = "ci:build"
 ZERO_SHA = "0" * 40
 PR_REFRESH_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
+# author_association values that mean write access through the organization
+# or the repository.
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+TRUSTED_STATUSES = {"vouched", "collaborator"}
 
 
-def plan(event_name, event, label=DEFAULT_LABEL):
+def read_vouched(text):
+    """Lower-cased GitHub login -> "vouched" or "denounced", from VOUCHED.td.
+    A denouncement wins over any vouch for the same login."""
+    entries = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        denounced = line.startswith("-")
+        platform, _, login = line.lstrip("-").split(None, 1)[0].partition(":")
+        if platform != "github" or not login:
+            continue
+        login = login.lower()
+        if denounced:
+            entries[login] = "denounced"
+        else:
+            entries.setdefault(login, "vouched")
+    return entries
+
+
+def author_status(pr, vouched):
+    """denounced, vouched, collaborator or unknown."""
+    listed = vouched.get((pr.get("user") or {}).get("login", "").lower())
+    if listed:
+        return listed
+    if pr.get("author_association") in TRUSTED_ASSOCIATIONS:
+        return "collaborator"
+    return "unknown"
+
+
+def plan(event_name, event, label=DEFAULT_LABEL, vouched=None):
     """Return the plan as a dict of strings, ready for $GITHUB_OUTPUT."""
     out = {"tier": "light", "reason": "", "base_sha": "", "head_sha": "",
            "pr_number": "", "fork": "false", "force": "false"}
@@ -44,15 +85,24 @@ def plan(event_name, event, label=DEFAULT_LABEL):
         action = event.get("action", "")
         labels = {item["name"] for item in pr.get("labels", [])}
         fork = pr["head"]["repo"] is None or pr["head"]["repo"]["full_name"] != pr["base"]["repo"]["full_name"]
+        author = (pr.get("user") or {}).get("login", "?")
+        status = author_status(pr, vouched or {})
         out.update(base_sha=pr["base"]["sha"], head_sha=pr["head"]["sha"],
                    pr_number=str(pr["number"]), fork=str(fork).lower())
-        if action == "labeled" and event.get("label", {}).get("name") == label:
+        if status == "denounced":
+            out["reason"] = f"checks only: {author} is denounced in .github/VOUCHED.td"
+        elif action == "labeled" and event.get("label", {}).get("name") == label:
             out.update(tier="full", reason=f"`{label}` applied to {pr['head']['sha'][:12]}")
+        elif action in PR_REFRESH_ACTIONS and status in TRUSTED_STATUSES and not pr.get("draft"):
+            out.update(tier="full", reason=f"{author} is trusted ({status})")
         elif action in PR_REFRESH_ACTIONS and label in labels and not fork:
             out.update(tier="full", reason=f"`{label}` is on this pull request")
         elif action in PR_REFRESH_ACTIONS and label in labels:
             out["reason"] = (f"fork pull request: re-apply `{label}` to build "
                              f"{pr['head']['sha'][:12]}")
+        elif status in TRUSTED_STATUSES:
+            out["reason"] = (f"draft: {author}'s builds start when it is ready for review, "
+                             f"or add `{label}` for a build now")
         else:
             out["reason"] = (f"checks only; the merge queue builds the kernel, or add `{label}` "
                              "for a build now")
@@ -81,13 +131,16 @@ def main(argv=None):
     parser.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME"))
     parser.add_argument("--event-path", type=Path, default=os.environ.get("GITHUB_EVENT_PATH"))
     parser.add_argument("--label", default=DEFAULT_LABEL)
+    parser.add_argument("--vouched", type=Path,
+                        help="the target branch's VOUCHED.td; without it only collaborators are trusted")
     args = parser.parse_args(argv)
     if not args.event_name or not args.event_path:
         parser.error("--event-name and --event-path (or the GitHub environment) are required")
 
     try:
-        result = plan(args.event_name, json.loads(args.event_path.read_text()), args.label)
-    except (KeyError, TypeError, ValueError) as error:
+        vouched = read_vouched(args.vouched.read_text()) if args.vouched else {}
+        result = plan(args.event_name, json.loads(args.event_path.read_text()), args.label, vouched)
+    except (KeyError, TypeError, ValueError, OSError) as error:
         print(f"::error title=CI plan::cannot plan this {args.event_name} event: {error!r}", file=sys.stderr)
         return 1
 
