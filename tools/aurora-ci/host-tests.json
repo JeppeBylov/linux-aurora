@@ -17,6 +17,8 @@
   "device-tree-compiler",
   "flex",
   "libarchive-tools",
+  "libegl-dev",
+  "libgles-dev",
   "libnotify-bin",
   "lld",
   "llvm",
@@ -1817,6 +1819,36 @@
    "argv": [
     "sh",
     "tools/aurora-sep/recipes/mesa-m3/tests/test-user-setup.sh"
+   ]
+  },
+  {
+   "name": "tools/aurora-sep/recipes/mesa-m3/tests/test-system-provider.py",
+   "group": "tools",
+   "argv": [
+    "python3",
+    "tools/aurora-sep/recipes/mesa-m3/tests/test-system-provider.py"
+   ]
+  },
+  {
+   "name": "tools/aurora-sep/recipes/mesa-m3/tests/test-system-board.c",
+   "group": "tools",
+   "setup": [
+    [
+     "cc",
+     "-std=c11",
+     "-Wall",
+     "-Wextra",
+     "-Werror",
+     "-pedantic",
+     "-O2",
+     "tools/aurora-sep/recipes/mesa-m3/tests/test-system-board.c",
+     "-ldl",
+     "-o",
+     "{output}"
+    ]
+   ],
+   "argv": [
+    "{output}"
    ]
   },
   {
