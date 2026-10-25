@@ -669,8 +669,18 @@ impl SepData {
                 return false;
             }
         };
+        // A cold-boot Mac's create rewrites a pre-Linux record for its own
+        // reasons (XART-SAFETY.md), so only warm attach gets the window.
+        let first_setup = self.profile.bootstrap == profile::Bootstrap::WarmRegister
+            && self
+                .with_store(|store| store.open_first_setup())
+                .unwrap_or(false);
         intent.sending();
-        let Some(out) = self.sks_exchange(request.name, request.msg, &request.img) else {
+        let exchanged = self.sks_exchange(request.name, request.msg, &request.img);
+        if first_setup {
+            self.with_store(|store| store.close_first_setup());
+        }
+        let Some(out) = exchanged else {
             dev_err!(
                 self.dev,
                 "sks: CREATE_KEYBAG exchange did not complete (buffers unregistered, wedged, or OOL write failed)\n"

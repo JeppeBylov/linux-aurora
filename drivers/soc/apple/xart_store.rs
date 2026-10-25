@@ -442,6 +442,20 @@ impl Store {
             .map(|guard| (guard.effective_level(), guard.list_loaded()))
     }
 
+    /// Opens the guard's first-setup window (see [`crate::xart_guard`]).
+    /// `false` without a guard or once this install has listed a record.
+    pub(crate) fn open_first_setup(&mut self) -> bool {
+        self.guard
+            .as_mut()
+            .is_some_and(|guard| guard.open_first_setup())
+    }
+
+    pub(crate) fn close_first_setup(&mut self) {
+        if let Some(guard) = self.guard.as_mut() {
+            guard.close_first_setup();
+        }
+    }
+
     /// Byte offset of the APFS-resolved gigalocker extent in the container.
     pub(crate) fn base(&self) -> u64 {
         self.base

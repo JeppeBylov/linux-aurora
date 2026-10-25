@@ -33,6 +33,15 @@
 //! record that was never written, which is harmless, and a failed adoption is
 //! retried in the same slot rather than skipped. It can never leave a Linux
 //! record that the next boot treats as another OS's.
+//!
+//! One exception lets a fresh install set up Touch ID on a warm-attach Mac.
+//! Blessing a newly installed OS in macOS leaves a SEP-xART locker (kind 4)
+//! that every OS's enclave reads at attach in a pending state, and the next
+//! enclave to save its state commits it. macOS's enclave does that at boot;
+//! under Linux the first save is the first `CREATE_KEYBAG`. While that create
+//! runs on an install whose list is loaded and empty ([`FirstSetup`]), the
+//! guard lets the enclave rewrite one existing kind-4 locker. It does not list
+//! the locker as Linux's, so the next rewrite is refused again.
 
 use crate::shim::StoreFile;
 use crate::xart_store::{crc32_ieee, Key};
@@ -77,6 +86,24 @@ pub(crate) fn decide(level: u8, key: &Key, existed: bool, owned: bool) -> Verdic
     } else {
         Verdict::Adopt
     }
+}
+
+/// Whether the first keybag creation of a fresh install is in progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FirstSetup {
+    /// No first keybag creation is in progress.
+    Closed,
+    /// The enclave may rewrite one existing SEP-xART locker.
+    Open,
+    /// It has; further refusals stand.
+    Used,
+}
+
+/// Whether a request the guard would refuse passes as the enclave committing a
+/// pending SEP-xART locker during the first keybag creation: a rewrite (not a
+/// delete) of a kind-4 record at level 1, while the window is open.
+pub(crate) fn first_setup_allows(level: u8, window: FirstSetup, key: &Key, write: bool) -> bool {
+    level == 1 && window == FirstSetup::Open && write && key.kind == 4
 }
 
 /// The guard level for `xart_guard=param` on a platform whose profile
@@ -206,6 +233,7 @@ pub(crate) struct Guard<F: ListFile = StoreFile> {
     owned: KVec<Key>,
     existed: KVec<Key>,
     refused: usize,
+    first_setup: FirstSetup,
 }
 
 impl Guard {
@@ -231,6 +259,7 @@ impl<F: ListFile> Guard<F> {
             owned: KVec::new(),
             existed: existing,
             refused: 0,
+            first_setup: FirstSetup::Closed,
         };
         // A list created this boot (or by a crashed one) is only safe to adopt
         // into once its name is durable: fsync() of the file alone does not
@@ -309,6 +338,22 @@ impl<F: ListFile> Guard<F> {
         self.file.is_some()
     }
 
+    /// Opens the first-setup window for one keybag creation, only on a fresh
+    /// install: the list loaded and holding no entry, torn ones included.
+    /// Returns whether it opened.
+    pub(crate) fn open_first_setup(&mut self) -> bool {
+        if self.file.is_none() || self.end != 0 {
+            return false;
+        }
+        self.first_setup = FirstSetup::Open;
+        true
+    }
+
+    /// Closes the first-setup window, used or not.
+    pub(crate) fn close_first_setup(&mut self) {
+        self.first_setup = FirstSetup::Closed;
+    }
+
     fn adopt(&mut self, key: &Key) -> Result<()> {
         let file = self.file.as_ref().ok_or(ENOENT)?;
         // The file's length, not the number of distinct keys: a torn or
@@ -347,6 +392,14 @@ impl<F: ListFile> Guard<F> {
                     e
                 )
             }),
+            Verdict::Refuse if first_setup_allows(self.level, self.first_setup, key, write) => {
+                self.first_setup = FirstSetup::Used;
+                pr_info!(
+                    "xART guard: allowed the enclave to commit an existing kind-{} locker during this install's first keybag creation\n",
+                    key.kind
+                );
+                Ok(())
+            }
             Verdict::Refuse => {
                 crate::diag::xart_guard_refused();
                 self.refused += 1;
@@ -564,6 +617,61 @@ mod tests {
         assert_eq!(guard.check(&foreign, false), Err(EPERM));
         // A refusal lists nothing.
         assert_eq!(bytes.borrow().len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn first_setup_allows_only_a_kind_4_rewrite_at_level_1() {
+        let open = FirstSetup::Open;
+        assert!(first_setup_allows(1, open, &session(1), true));
+        assert!(!first_setup_allows(1, open, &session(1), false));
+        assert!(!first_setup_allows(1, open, &Key::new(3, [1; 16]), true));
+        assert!(!first_setup_allows(2, open, &session(1), true));
+        assert!(!first_setup_allows(1, FirstSetup::Closed, &session(1), true));
+        assert!(!first_setup_allows(1, FirstSetup::Used, &session(1), true));
+    }
+
+    #[test]
+    fn a_fresh_install_commits_one_locker_during_its_first_create() -> Result<()> {
+        let bytes = RefCell::new(KVec::new());
+        let pending = session(1);
+        let other = session(2);
+        let user = Key::new(3, [3; 16]);
+        let mut guard = Guard::with_file(1, keys(&[pending, other, user])?, Ok(mem(&bytes)));
+        // Outside the window the locker is protected as before.
+        assert_eq!(guard.check(&pending, true), Err(EPERM));
+        assert!(guard.open_first_setup());
+        // A delete, or a USER-xART locker, does not use the window.
+        assert_eq!(guard.check(&other, false), Err(EPERM));
+        assert_eq!(guard.check(&user, true), Err(EPERM));
+        assert_eq!(guard.check(&pending, true), Ok(()));
+        // One rewrite only, and the locker does not become Linux's.
+        assert_eq!(guard.check(&other, true), Err(EPERM));
+        assert_eq!(bytes.borrow().len(), 0);
+        guard.close_first_setup();
+        assert_eq!(guard.check(&pending, true), Err(EPERM));
+        assert_eq!(guard.refused, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn first_setup_needs_an_empty_loaded_list() -> Result<()> {
+        let pending = session(1);
+        let own = session(2);
+        let bytes = RefCell::new(list_of(&[own])?);
+        let mut guard = Guard::with_file(1, keys(&[pending, own])?, Ok(mem(&bytes)));
+        assert!(!guard.open_first_setup());
+        assert_eq!(guard.check(&pending, true), Err(EPERM));
+
+        // A torn entry is still an earlier setup.
+        let torn = RefCell::new(KVec::new());
+        torn.borrow_mut().extend_from_slice(&encode(&own)[..10], GFP_KERNEL)?;
+        let mut guard = Guard::with_file(1, keys(&[pending])?, Ok(mem(&torn)));
+        assert!(!guard.open_first_setup());
+
+        let mut guard = Guard::<MemFile<'_>>::with_file(1, keys(&[pending])?, Err(ENOENT));
+        assert!(!guard.open_first_setup());
+        assert_eq!(guard.check(&pending, true), Err(EPERM));
         Ok(())
     }
 

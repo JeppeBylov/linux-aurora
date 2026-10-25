@@ -79,7 +79,8 @@ another finger into an existing keybag does not create one.
 | --- | --- | --- |
 | M1 (T8103), M1 Pro/Max (T6000/T6001) | cold boot | Refused: it rewrites a pre-Linux session record (seen on T6000; T8103 and T6001 untested). Needs `xart_guard=0`. |
 | M2 (T8112) | warm attach | No xART writes (J413), so the guard does not affect it. |
-| M2 Pro/Max (T6020/T6021), M3 (T8122) | warm attach | Untested. |
+| M2 Max (T6021, J416c) | warm attach | On a fresh install, commits one pending SEP-xART locker; allowed once (see "Fresh installs"). Otherwise no xART writes. |
+| M2 Pro (T6020), M3 (T8122) | warm attach | Untested. |
 | MacBook Neo (T8140) | warm attach | Guard off by default. |
 
 Whether the enclave writes xART records while enrolling a finger has not
@@ -187,6 +188,44 @@ On a T600x Mac where Linux has created its keybag, treat macOS Touch ID as
 unverified until macOS Touch ID unlock and keychain access have been checked
 there. The other cold-boot SoCs (T8103, T6001, T6002) probably behave the
 same way; that is untested.
+
+## Fresh installs: the pending SEP-xART locker (2026-10-25)
+
+Measured on an M2 Max (T6021, J416c, system firmware 26.6.2) installed with
+the Omarchy Mac installer:
+
+- The installer blesses the new stub from macOS. While it does, the
+  enclave saves SEP-xART root/locker/root triples, which leave one SEP-xART
+  locker (kind 4) larger than its usual 1137 bytes (2321 bytes right after
+  the bless on one run). By Linux's first boot, after macOS shut down and
+  recoveryOS finished the install, it held 2715 bytes on both runs.
+- Every OS's enclave reads that locker at attach, alongside three others:
+  macOS's own xART log shows the same four, under its own OS identity.
+- The next enclave to save its state commits the locker back to 1137 bytes.
+  macOS's enclave does that at boot. Under Linux the first save comes inside
+  the first `CREATE_KEYBAG`: a SEP-xART root write, then the locker rewrite.
+  The guard refused the rewrite, `CREATE_KEYBAG` got no reply, and the
+  enclave stopped answering until a restart.
+- After one macOS boot, keybag creation under the guard made no xART writes.
+  Enrolment, match, restore after a restart and a match after it wrote only
+  the USER-xART root. macOS Touch ID unlock and the login keychain were
+  unaffected.
+- Changing the startup disk between macOS and Linux in System Settings did
+  not leave the locker pending.
+- With the window below, a fresh install (no macOS boot after it) created
+  its keybag on Linux's first boot: the enclave committed the locker to
+  1137 bytes, as macOS's does, and the list stayed empty. Enrolment, match,
+  `keyctl` seal and load, restore and match after a restart, macOS Touch ID
+  unlock and keychain, then restore, `keyctl` load and match back in Linux
+  all passed, with no refusal.
+
+So during the first `CREATE_KEYBAG` of an install whose list is loaded and
+empty, on a warm-attach Mac at level 1, the guard lets the enclave rewrite
+one existing kind-4 locker (`FirstSetup` in `xart_guard.rs`). It does not
+list the locker as Linux's, so no later rewrite passes. Deletes, kind-3
+lockers and a second rewrite are refused as before, and cold-boot Macs get
+no window: their create rewrites a pre-Linux record for a different reason
+(above).
 
 ## Earlier deployment policy
 
