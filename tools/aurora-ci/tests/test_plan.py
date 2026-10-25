@@ -147,13 +147,14 @@ class TrustedAuthorTest(TempDirTestCase):
 
     def test_the_repository_list_is_well_formed(self):
         path = TREE / ".github" / "VOUCHED.td"
-        logins = [line.split(":", 1)[1] for line in path.read_text().splitlines()
-                  if line.startswith("github:")]
-        self.assertTrue(logins)
+        entries = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
+        logins = [entry.lstrip("-").split()[0].partition(":")[2] for entry in entries]
+        self.assertTrue(all(entry.lstrip("-").startswith("github:") for entry in entries))
+        self.assertTrue(all(len(entry.split()) > 1 for entry in entries if entry.startswith("-")),
+                        "a denouncement needs a reason")
+        self.assertIn("vouched", plan_module.read_vouched(path.read_text()).values())
         self.assertEqual(logins, sorted(logins, key=str.lower))
         self.assertEqual(len(logins), len({login.lower() for login in logins}))
-        self.assertTrue(all(status == "vouched" for status in
-                            plan_module.read_vouched(path.read_text()).values()))
 
 
 class OtherEventsTest(TempDirTestCase):
